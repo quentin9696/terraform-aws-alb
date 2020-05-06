@@ -2,8 +2,8 @@ provider "aws" {
   region = "eu-west-1"
 }
 
-locals {
-  domain_name = "terraform-aws-modules.modules.tf"
+provider "tls" {
+  version = "2.0.1"
 }
 
 ##################################################################
@@ -21,10 +21,6 @@ resource "random_pet" "this" {
   length = 2
 }
 
-data "aws_route53_zone" "this" {
-  name = local.domain_name
-}
-
 //module "log_bucket" {
 //  source  = "terraform-aws-modules/s3-bucket/aws"
 //  version = "~> 1.0"
@@ -35,12 +31,32 @@ data "aws_route53_zone" "this" {
 //  attach_elb_log_delivery_policy = true
 //}
 
-module "acm" {
-  source  = "terraform-aws-modules/acm/aws"
-  version = "~> 2.0"
+resource "tls_private_key" "this" {
+  algorithm = "RSA"
+}
 
-  domain_name = local.domain_name # trimsuffix(data.aws_route53_zone.this.name, ".") # Terraform >= 0.12.17
-  zone_id     = data.aws_route53_zone.this.id
+resource "tls_self_signed_cert" "this" {
+  key_algorithm   = "RSA"
+  private_key_pem = tls_private_key.this.private_key_pem
+
+  subject {
+    common_name  = "yes.iam.selfsigned"
+    organization = "ACME Examples, Inc"
+  }
+
+  # 10 years
+  validity_period_hours = 87600
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+  ]
+}
+
+resource "aws_acm_certificate" "this_selfsigned" {
+  private_key      = tls_private_key.this.private_key_pem
+  certificate_body = tls_self_signed_cert.this.cert_pem
 }
 
 resource "aws_eip" "this" {
@@ -97,7 +113,7 @@ module "nlb" {
     {
       port               = 84
       protocol           = "TLS"
-      certificate_arn    = module.acm.this_acm_certificate_arn
+      certificate_arn    = aws_acm_certificate.this_selfsigned.arn,
       target_group_index = 3
     },
   ]
